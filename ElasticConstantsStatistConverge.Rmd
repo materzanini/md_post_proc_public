@@ -1,0 +1,439 @@
+---
+jupyter:
+  jupytext:
+    text_representation:
+      extension: .Rmd
+      format_name: rmarkdown
+      format_version: '1.2'
+      jupytext_version: 1.13.8
+  kernelspec:
+    display_name: Python 3 (ipykernel)
+    language: python
+    name: python3
+---
+
+```{python}
+# this is to reload the python files file if they are changed on the disk
+# %load_ext autoreload
+# %autoreload 2
+```
+
+```{python}
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.offsetbox import AnchoredText
+from matplotlib.ticker import (MultipleLocator, FormatStrFormatter,AutoMinorLocator)
+import ElasticConstantsStatistConvergModule as ECM
+from scipy.interpolate import interp1d
+rad2deg=180/np.pi
+bohr2a = 0.52917724899
+```
+
+```{python}
+# input and output files and labels
+material = 't-LGPS-2x1x1' # label for the material
+nAtoms = 100              # number of atoms in the unit cell
+temperature = 600         # temperature (used for labelling)
+
+path = ''                         # path of the files
+fileEvpName = path + 'LGPS.evp'   # file evp of QE
+fileCelName = path + 'LGPS.cel'   # file cel of QE
+
+# output files
+fileModuliTOutName = path + 'moduli_' + material + '_' + str(temperature) + 'K_convergence.dat'
+fileModuliOutName = path + 'moduli_'  + material + '_' + str(temperature) + 'K.dat'
+
+# figures name
+fileEpsilonPngName = path + 'epsilon.png'
+fileModuliName = path + 'moduli.png'
+fileCellPngName = path + 'cell_parameters.png'
+filesigma2moduliPngName = path + 'sigma.png'
+
+print('material    = ', material)
+print('temperature = ', temperature,'K')
+```
+
+```{python}
+# parse QE files
+fileEvpAsArray = ECM.read_from_file_evp(fileEvpName)
+celArrayTmp = ECM.read_cel_from_file_cel(fileCelName,4)
+```
+
+```{python}
+# # copy the output array of the evp file in multiple ones for an easier handling
+mdArrayTmp       = np.copy(fileEvpAsArray[:,0])
+timeArrayTmp     = np.copy(fileEvpAsArray[:,1])
+ekincArrayTmp    = np.copy(fileEvpAsArray[:,2])
+tIonsArrayTmp    = np.copy(fileEvpAsArray[:,4])
+eCPArrayTmp      = np.copy(fileEvpAsArray[:,5])
+eConsArrayTmp    = np.copy(fileEvpAsArray[:,7])
+eContArrayTmp    = np.copy(fileEvpAsArray[:,8])
+volumeArrayTmp   = np.copy(fileEvpAsArray[:,9])
+pressureArrayTmp = np.copy(fileEvpAsArray[:,10])
+```
+
+```{python}
+# define some CP quantities
+ekinIonsArrayTmp = eConsArrayTmp - eCPArrayTmp
+eRestArrayTmp = eContArrayTmp - eConsArrayTmp - ekincArrayTmp
+```
+
+```{python}
+# estimate indexTInitial and cut timeArrayTmp from tInitial
+estimatedTForEnergy = 0.2 # truncate trajectory if needed (in picoseconds)
+tEne = ECM.find_nearest(timeArrayTmp, estimatedTForEnergy)
+indexTEne=int(np.nonzero(timeArrayTmp == tEne)[0])
+```
+
+```{python}
+# plot temperature during the simulation
+fig = plt.figure()
+ax1 = fig.add_subplot(111)
+ax1.plot(timeArrayTmp[indexTEne:],tIonsArrayTmp[indexTEne:],label="$Temp_{ions}$",c='tab:red')
+
+ax1.set_xlabel('time (ps)')
+ax1.set_ylabel('temperature (K)')
+ax1.text(0.35, 0.9, material,
+        verticalalignment='bottom', horizontalalignment='right',
+         transform=ax1.transAxes,
+        color='black', fontsize=15)
+plt.legend(loc=1, bbox_to_anchor=(1,1))
+plt.show()
+```
+
+```{python}
+# plot CP energies
+fig = plt.figure()
+ax1 = fig.add_subplot(111)
+ax1.plot(timeArrayTmp[indexTEne:],eCPArrayTmp[indexTEne:],label="$E_{CP}$",c='tab:cyan')
+ax1.plot(timeArrayTmp[indexTEne:],eConsArrayTmp[indexTEne:],label="$E_{cons}$",c='tab:red')
+ax1.plot(timeArrayTmp[indexTEne:],eContArrayTmp[indexTEne:],label="$E_{cont}$",c='black')
+ax1.set_xlim(0,200)
+ax1.set_xlabel('time (ps)')
+ax1.set_ylabel('energy (Hartree)')
+ax1.text(0.8, 0.9, material,
+        verticalalignment='bottom', horizontalalignment='right',
+         transform=ax1.transAxes,
+        color='black', fontsize=15)
+plt.legend(loc=1, bbox_to_anchor=(1,1))
+plt.show();
+
+```
+
+```{python}
+# read cell params
+nt,aTmp,bTmp,cTmp,alphaTmp,betaTmp,gammaTmp,volumeCellTmp = ECM.cellVectAndAngles(celArrayTmp)
+```
+
+```{python}
+# average
+aAve   = np.mean(aTmp)
+bAve   = np.mean(bTmp)
+cAve   = np.mean(cTmp)
+volAve = np.mean(volumeCellTmp)
+```
+
+```{python}
+# plot lattice params
+fig = plt.figure(figsize=(6.4,4.8))
+ax1 = fig.add_subplot(111)
+ax1.plot(timeArrayTmp,aTmp,label="<$a$> = "'%3.2f'%(aAve),c='tab:purple')
+ax1.plot(timeArrayTmp,bTmp,label="<$b$> = "'%3.2f'%(bAve),c='tab:olive')
+ax1.plot(timeArrayTmp,cTmp,label="<$c$> = "'%3.2f'%(cAve),c='tab:cyan')
+ax1.set_ylim(5,20)
+ax1.set_xlabel('time (ps)')
+ax1.set_ylabel('cell edge ($\mathrm{\AA}$)')
+plt.legend()
+plt.savefig(fileCellPngName,dpi=300, bbox_inches='tight', pad_inches=0.01)
+plt.show()
+```
+
+```{python}
+# plot angles
+fig = plt.figure(figsize=(6.4,4.8))
+ax1 = fig.add_subplot(111)
+ax1.plot(timeArrayTmp,alphaTmp*rad2deg,label="$\\alpha$",c='tab:purple')
+ax1.plot(timeArrayTmp,betaTmp*rad2deg,label="$\\beta$",c='tab:olive')
+ax1.plot(timeArrayTmp,gammaTmp*rad2deg,label="$\\gamma$",c='tab:cyan')
+ax1.set_xlim(0,200)
+ax1.set_xlabel('time (ps)')
+ax1.set_ylabel('angles (deg)')
+ax1.text(0.8, 0.9, material,
+        verticalalignment='bottom', horizontalalignment='right',
+         transform=ax1.transAxes,
+        color='black', fontsize=15)
+plt.legend(loc=1, bbox_to_anchor=(1,1))
+plt.show()
+```
+
+```{python}
+# plot volume
+fig = plt.figure()
+ax1 = fig.add_subplot(111)
+ax1.plot(timeArrayTmp,volumeArrayTmp*(bohr2a)**3,label="volume",c='tab:red')
+ax1.set_xlim(0,200)
+ax1.set_xlabel('time (ps)')
+ax1.set_ylabel('volume (Angstrom)')
+ax1.text(0.4, 0.8, str(material) + '\n' + str(temperature) + 'K',
+        verticalalignment='bottom', horizontalalignment='right',
+         transform=ax1.transAxes,
+        color='black', fontsize=15)
+plt.legend(loc=1, bbox_to_anchor=(1,1))
+plt.show()
+
+```
+
+```{python}
+# estimate indexTInitial and cut timeArrayTmp from tInitial
+estimatedTInitial = 2.5 # change this value for equilibration time (in picoseconds)
+#
+tInitial = ECM.find_nearest(timeArrayTmp, estimatedTInitial)
+indexTInitial=int(np.nonzero(timeArrayTmp == tInitial)[0])
+mdInitial = mdArrayTmp[indexTInitial]
+#
+ntCut = nt - indexTInitial
+timeArrayCut = timeArrayTmp[indexTInitial:]
+celArrayCut = celArrayTmp [indexTInitial:,:,:]
+mdArrayCut = mdArrayTmp [indexTInitial:]
+volumeArrayCut = volumeArrayTmp[indexTInitial:]
+```
+
+```{python}
+# replot volume
+fig = plt.figure()
+ax1 = fig.add_subplot(111)
+ax1.plot(timeArrayCut,volumeArrayCut*(bohr2a)**3,label="volume",c='tab:red')
+ax1.set_xlim(0,200)
+ax1.set_xlabel('time (ps)')
+ax1.set_ylabel('volume (Angstrom)')
+ax1.text(0.4, 0.8, str(material) + '\n' + str(temperature) + 'K',
+        verticalalignment='bottom', horizontalalignment='right',
+         transform=ax1.transAxes,
+        color='black', fontsize=15)
+plt.legend(loc=1, bbox_to_anchor=(1,1))
+plt.show();
+
+```
+
+```{python}
+# set arrays
+timeArray = timeArrayCut
+celArray = celArrayCut
+mdArray = mdArrayCut
+```
+
+```{python}
+# calculate cell tensor as a function of time, its average, the strain also in voigt notation, and the volume 
+hLat = ECM.hTohCrystal(celArray)
+hLatAve = np.mean(hLat,axis=0)
+epsilonT, volAve = ECM.hToEpsilon(hLat)
+epsilonVoigt = ECM.epsToepsVoigt(epsilonT)
+Volume = ECM.htoVolume(celArray)
+```
+
+```{python}
+#
+fig = plt.figure()
+ax1 = fig.add_subplot(111)
+
+ax1.plot(timeArray,epsilonVoigt[:,0],label="$\epsilon_1$")
+ax1.plot(timeArray,epsilonVoigt[:,1],label="$\epsilon_2$")
+ax1.plot(timeArray,epsilonVoigt[:,2],label="$\epsilon_3$")
+ax1.plot(timeArray,epsilonVoigt[:,3],label="$\epsilon_4$")
+ax1.plot(timeArray,epsilonVoigt[:,4],label="$\epsilon_5$")
+ax1.plot(timeArray,epsilonVoigt[:,5],label="$\epsilon_6$")
+ax1.set_ylim(-0.1,0.1)
+ax1.set_xlim(0,200)
+ax1.yaxis.set_major_locator(MultipleLocator(0.02))
+ax1.yaxis.set_minor_locator(MultipleLocator(0.002))
+
+ax1.set_xlabel('time (ps)')
+ax1.set_ylabel('strain')
+ax1.text(0.8, 0.9, str(material) + ' ' + str(temperature)+  ' K',
+        verticalalignment='bottom', horizontalalignment='right',
+         transform=ax1.transAxes,
+        color='black', fontsize=15)
+plt.legend(loc=1, bbox_to_anchor=(1,1))
+plt.savefig(fileEpsilonPngName,dpi=300, bbox_inches='tight', pad_inches=0.01)
+plt.show()
+```
+
+```{python}
+# calculate elastic constants
+elasticConstants, compliances = ECM.epsVoigtToElasticConstants(epsilonVoigt,Volume,temperature)
+```
+
+```{python}
+# calculate moduli and do block analysis
+maxBlock = 600 # maximum number of blocks for which the trajectory is divided
+nblockStep = 1 # step between a division and another
+errBModulusList = []
+errGModulusList = []
+errEModulusList = []
+errRPoissonList = []
+dataInBlockList = []
+for iblock in range(0,maxBlock,nblockStep):
+    errC, errS, errVolume = ECM.elasticConstantsError(epsilonVoigt,Volume,compliances,elasticConstants,temperature,iblock+2)
+    BModulus,errBModulus,GModulus,errGModulus,EModulus,errEModulus,rPoisson,errRPoisson = ECM.ElasticConstantsToModuliAndErrors(elasticConstants,errC**2,compliances,errS**2)
+    errBModulusList.append(errBModulus)
+    errGModulusList.append(errGModulus)
+    errEModulusList.append(errEModulus)
+    errRPoissonList.append(errRPoisson)
+    dataInBlockList.append(int(Volume.shape[0]/(iblock+2)))   
+```
+
+```{python}
+# plot the result of the block analysis on moduli
+fig = plt.figure()
+ax1 = fig.add_subplot(111)
+ax1.plot(dataInBlockList,errBModulusList/BModulus,marker=".",label="$\sigma$(B)/B")
+ax1.plot(dataInBlockList,errGModulusList/GModulus,marker=".",label="$\sigma$(G)/G")
+ax1.plot(dataInBlockList,errEModulusList/EModulus,marker=".",label="$\sigma$(E)/E")
+ax1.plot(dataInBlockList,errRPoissonList/rPoisson,marker=".",label="$\sigma$($\\nu$)/$\\nu$")
+ax1.xaxis.set_major_locator(MultipleLocator(5000))
+ax1.xaxis.set_minor_locator(MultipleLocator(1000))
+ax1.yaxis.set_major_locator(MultipleLocator(0.02))
+ax1.yaxis.set_minor_locator(MultipleLocator(0.002))
+ax1.set_xlabel('# data in block')
+ax1.set_ylabel('variance/absolute value of the mean')
+plt.legend(loc=1, bbox_to_anchor=(1,1))
+plt.savefig(filesigma2moduliPngName,dpi=300, bbox_inches='tight', pad_inches=0.01)
+plt.show()
+```
+
+```{python}
+# estimate number of blocks for uncorrelated data
+estimatedDataInBlock = 4200
+actualEstimatedDataInBlock = ECM.find_nearest(dataInBlockList, estimatedDataInBlock)
+estimatedNBlocks = int(Volume.shape[0]/actualEstimatedDataInBlock)
+print('estimated number of blocks:' ,estimatedNBlocks)
+```
+
+```{python}
+# choose number of blocks
+nBlockChosen = estimatedNBlocks # default
+```
+
+```{python}
+# estimate errors on moduli and write it to file
+errC, errS, errVolume = ECM.elasticConstantsError(epsilonVoigt,Volume,compliances,elasticConstants,temperature,nBlockChosen)
+BModulus,errBModulus,GModulus,errGModulus,EModulus,errEModulus,rPoisson,errRPoisson = ECM.ElasticConstantsToModuliAndErrors(elasticConstants,errC**2,compliances, errS**2)
+outModuli_file=open(fileModuliOutName, "w+")
+outModuli_file.write(str(BModulus) + ' ' +  str(errBModulus) + '\n ')
+outModuli_file.write(str(GModulus) + ' ' +  str(errGModulus) + '\n ')
+outModuli_file.write(str(EModulus) + ' ' +  str(errEModulus) + '\n ')
+outModuli_file.write(str(rPoisson) + ' ' +  str(errRPoisson) + '\n ')
+outModuli_file.close()
+```
+
+```{python}
+# estimate modulus convergence with errors
+nTraj = nBlockChosen # nTraj divides the trajectory. nTraj = nBlockChosen is the default option
+modulusDict = {"B":{},"G":{},"E":{},"$\\nu$":{}}
+for modulus in modulusDict:
+    modulusDict[modulus] = {"value":[],"err":[],"timeMax":[]}
+nTraj = nBlockChosen
+for i in range(1,nTraj,1):
+    indexTFinal = int(celArray.shape[0]/nTraj) * (i+1)
+    celArrayCut = celArray[:indexTFinal,:,:]
+    VolumeCut = ECM.htoVolume(celArrayCut)
+    nBlockEach = round(celArrayCut.shape[0]/celArray.shape[0]*nBlockChosen)
+    hLat = ECM.hTohCrystal(celArrayCut)
+    hLatAve = np.mean(hLat,axis=0)
+    epsilonT, volAve = ECM.hToEpsilon(hLat)
+    epsilonVoigt = ECM.epsToepsVoigt(epsilonT)
+    elasticConstants, compliances = ECM.epsVoigtToElasticConstants(epsilonVoigt,VolumeCut,temperature)
+    errC, errS, errVolume = ECM.elasticConstantsError(epsilonVoigt,VolumeCut,compliances,elasticConstants,temperature,nBlockEach)
+    BModulus,errBModulus,GModulus,errGModulus,EModulus,errEModulus,rPoisson,errRPoisson = ECM.ElasticConstantsToModuliAndErrors(elasticConstants,errC**2,compliances,errS**2)
+    modulusDict["B"]["value"].append(BModulus)
+    modulusDict["B"]["err"].append(errBModulus)
+    modulusDict["G"]["value"].append(GModulus)
+    modulusDict["G"]["err"].append(errGModulus)    
+    modulusDict["E"]["value"].append(EModulus)
+    modulusDict["E"]["err"].append(errEModulus)
+    modulusDict["$\\nu$"]["value"].append(rPoisson)
+    modulusDict["$\\nu$"]["err"].append(errRPoisson)
+    for modulus in modulusDict:
+        modulusDict[modulus]["timeMax"].append(timeArray[indexTFinal-1]-tInitial)
+```
+
+```{python}
+# decide colors for plotting
+for modulus in modulusDict:
+    for listName in modulusDict[modulus]:
+        modulusDict[modulus][listName] = np.array(modulusDict[modulus][listName])
+modulusDict["B"]["color"] = 'tab:blue'
+modulusDict["G"]["color"] = 'tab:orange'
+modulusDict["E"]["color"] = 'tab:green'
+modulusDict["$\\nu$"]["color"] = 'tab:red'
+```
+
+```{python}
+# output converged moduli
+outModuliT_file=open(fileModuliTOutName, "w+")
+for i in range(1,nTraj-1,1):
+    outModuliT_file.write('%6.2f'%(modulusDict["B"]["timeMax"][i])+' '+'%7.2f'%(modulusDict["B"]["value"][i])+' '+'%5.2f'%(modulusDict["B"]["err"][i])+ ' '+'%7.2f'%(modulusDict["G"]["value"][i])+' '+'%5.2f'%(modulusDict["G"]["err"][i]) + ' '+'%7.2f'%(modulusDict["E"]["value"][i])+' '+'%5.2f'%(modulusDict["E"]["err"][i]) + ' '+'%6.2f'%(modulusDict["$\\nu$"]["value"][i])+' '+'%5.2f'%(modulusDict["$\\nu$"]["err"][i]) + '\n')
+outModuliT_file.close()
+```
+
+```{python}
+# plot result of the convergence
+fig = plt.figure(figsize=(6.4*1,4.8*1))
+ax = []
+ax.append(fig.add_subplot(411))
+ax.append(fig.add_subplot(412))
+ax.append(fig.add_subplot(413))
+ax.append(fig.add_subplot(414))
+#
+ax[0].set_ylim(12,22)
+ax[1].set_ylim(5,8.5)
+ax[2].set_ylim(10,23)
+ax[3].set_ylim(0.10,0.40)
+#ax4.xaxis.grid(True, which='minor')
+ax[0].yaxis.set_major_locator(MultipleLocator(2))
+ax[1].yaxis.set_major_locator(MultipleLocator(1))
+ax[2].yaxis.set_major_locator(MultipleLocator(5))
+#ax.xaxis.set_major_formatter(FormatStrFormatter('%d'))
+ax[0].yaxis.set_minor_locator(MultipleLocator(0.2))
+ax[1].yaxis.set_minor_locator(MultipleLocator(0.1))
+ax[2].yaxis.set_minor_locator(MultipleLocator(1))
+ax[3].yaxis.set_minor_locator(MultipleLocator(0.02))
+#
+ax[0].xaxis.set_minor_locator(MultipleLocator(5))
+ax[1].xaxis.set_minor_locator(MultipleLocator(5))
+ax[2].xaxis.set_minor_locator(MultipleLocator(5))
+ax[3].xaxis.set_minor_locator(MultipleLocator(5))
+#
+labels = [item.get_text() for item in ax[0].get_xticklabels()]
+empty_string_labels = ['']*len(labels)
+ax[0].set_xticklabels(empty_string_labels)
+ax[1].set_xticklabels(empty_string_labels)
+ax[2].set_xticklabels(empty_string_labels)
+ax[3].set_xlabel('trajectory length (ps)')
+ax[0].set_ylabel('B (GPa)')
+ax[1].set_ylabel('G (GPa)')
+ax[2].set_ylabel('E (GPa)')
+ax[3].set_ylabel('$\\nu$')
+
+
+fig.align_ylabels(ax[:])
+
+for i in range(len(modulusDict)):
+    modulus = list(modulusDict.keys())[i]
+    
+    ax[i].errorbar(modulusDict[modulus]["timeMax"],modulusDict[modulus]["value"],yerr=modulusDict[modulus]["err"],label=modulus,marker='.',linestyle='--',c=modulusDict[modulus]['color'])
+    x  = modulusDict[modulus]["timeMax"]
+    y1 = modulusDict[modulus]["value"]+modulusDict[modulus]["err"]
+    y2 = modulusDict[modulus]["value"]-modulusDict[modulus]["err"]
+    f1 = interp1d(x,y1,kind='cubic')
+    f2 = interp1d(x,y2,kind='cubic')
+    xRefined = np.linspace(x[0],x[len(x)-1],len(x)*100,endpoint=True)
+    ax[i].fill_between(xRefined, f1(xRefined), f2(xRefined),color=modulusDict[modulus]['color'],alpha=0.2)
+plt.savefig(fileModuliName,dpi=300, bbox_inches='tight', pad_inches=0.01)
+#
+# ax1.tick_params(labelright=True, right=True, which='major')
+# ax1.tick_params(labelright=True, right=True, which='minor')
+#
+#
+
+```
